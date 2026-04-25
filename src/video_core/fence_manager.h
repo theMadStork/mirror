@@ -16,6 +16,7 @@
 #include <queue>
 
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "video_core/delayed_destruction_ring.h"
@@ -214,7 +215,12 @@ private:
             if (!current_fence->IsStubbed()) {
                 WaitFence(current_fence);
             }
-            PopAsyncFlushes();
+            try {
+                PopAsyncFlushes();
+            } catch (const std::exception& e) {
+                LOG_CRITICAL(Render_Vulkan, "GPUFencingThread: exception in PopAsyncFlushes: {}", e.what());
+                throw;
+            }
             for (auto& operation : current_operations) {
                 operation();
             }
