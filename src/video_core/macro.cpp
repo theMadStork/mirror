@@ -142,7 +142,6 @@ void HLE_DrawIndexedIndirect::Execute(Engines::Maxwell3D& maxwell3d, std::span<c
         return;
     }
 
-    const u32 estimate = u32(maxwell3d.EstimateIndexBufferSize());
     const u32 element_base = parameters[4];
     const u32 base_instance = parameters[5];
     maxwell3d.regs.vertex_id_base = element_base;
@@ -159,12 +158,13 @@ void HLE_DrawIndexedIndirect::Execute(Engines::Maxwell3D& maxwell3d, std::span<c
     params.is_indexed = true;
     params.include_count = false;
     params.count_start_address = 0;
-    params.indirect_start_address = maxwell3d.GetMacroAddress(1);
+    const GPUVAddr indirect_addr = maxwell3d.GetMacroAddress(1);
+    params.indirect_start_address = indirect_addr;
     params.buffer_size = 5 * sizeof(u32);
     params.max_draw_counts = 1;
     params.stride = 0;
     maxwell3d.dirty.flags[VideoCommon::Dirty::IndexBuffer] = true;
-    maxwell3d.draw_manager.DrawIndexedIndirect(maxwell3d, topology, 0, estimate);
+    maxwell3d.draw_manager.DrawIndexedIndirect(maxwell3d, topology, 0, parameters[1]);
     maxwell3d.regs.vertex_id_base = 0x0;
     maxwell3d.regs.global_base_vertex_index = 0x0;
     maxwell3d.regs.global_base_instance_index = 0x0;
