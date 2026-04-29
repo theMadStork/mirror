@@ -7,8 +7,14 @@
 #pragma once
 
 #include <array>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
 #include <QDialog>
+#include <QPointer>
+#include "common/param_package.h"
 #include "core/frontend/applets/controller.h"
 
 class MainWindow;
@@ -17,8 +23,10 @@ class QComboBox;
 class QDialogButtonBox;
 class QGroupBox;
 class QLabel;
+class QTimer;
 
 class InputProfiles;
+class StickWidget;
 
 namespace InputCommon {
 class InputSubsystem;
@@ -52,6 +60,10 @@ public:
     int exec() override;
 
     void keyPressEvent(QKeyEvent* evt) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
+    // When set, exec() will always show the dialog even if parameters are already met.
+    void SetForceShow() { force_show = true; }
 
 private:
     // Applies the current configuration.
@@ -110,6 +122,23 @@ private:
     // Disables and disconnects unsupported players based on the given parameters.
     void DisableUnsupportedPlayers();
 
+    // Moves the gamepad focus highlight to the given player slot.
+    void SetFocusedPlayer(std::size_t index);
+
+    // Moves the gamepad focus to the OK button.
+    enum class FocusedButton { None, OK };
+    void SetFocusedButton(FocusedButton btn);
+
+    // Rebuilds the stylesheet for a player groupbox to reflect current focus + game border state.
+    void RefreshPlayerSlotStyle(std::size_t player_index);
+
+    // Applies the selected physical input device mappings to a player's controller.
+    void ApplyInputDevice(std::size_t player_index);
+
+    // Called on the Qt thread when player N's physical controller presses A (connect) or B (disconnect).
+    void OnPlayerButtonA(std::size_t player_index);
+    void OnPlayerButtonB(std::size_t player_index);
+
     std::unique_ptr<Ui::QtControllerSelectorDialog> ui;
 
     // Parameters sent in from the backend HLE applet.
@@ -126,6 +155,19 @@ private:
     // This is true if and only if all parameters are met. Otherwise, this is false.
     // This determines whether the "OK" button can be clicked to exit the applet.
     bool parameters_met{false};
+
+    // When true, exec() shows the dialog even when parameters are already met.
+    bool force_show{false};
+
+    // Index of the player slot currently highlighted by gamepad navigation.
+    // Initialised to NUM_PLAYERS (sentinel for "none") until SetFocusedPlayer is called.
+    std::size_t focused_player_index{NUM_PLAYERS};
+
+    // Which dialog button (OK/Cancel) currently has gamepad focus, if any.
+    FocusedButton focused_button{FocusedButton::None};
+
+    // Last player slot that had focus; used to restore column position when returning from buttons.
+    std::size_t last_focused_player{0};
 
     static constexpr std::size_t NUM_PLAYERS = 8;
 
@@ -160,6 +202,29 @@ private:
 
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, NUM_PLAYERS> connected_controller_checkboxes;
+
+    // Left-stick position indicators, one per player slot.
+    std::array<StickWidget*, NUM_PLAYERS> stick_indicators{};
+
+    // Input device (gamepad) selectors, one per player slot.
+    std::array<QComboBox*, NUM_PLAYERS> input_device_combos{};
+
+    // Cached list of physical gamepads (IsController() == true) from the input subsystem.
+    std::vector<Common::ParamPackage> cached_input_devices;
+
+    // Deduplicated display labels for cached_input_devices (same index).
+    std::vector<std::string> cached_device_labels;
+
+    // Callback keys for per-player A/B claim detection (index NUM_PLAYERS = Handheld → slot 0).
+    std::array<int, NUM_PLAYERS> player_claim_callback_keys{};
+    int handheld_claim_callback_key{-1};
+
+    // Rising-edge state for A/B per slot (NUM_PLAYERS+1 entries; last = Handheld).
+    std::mutex claim_state_mutex;
+    std::array<bool, NUM_PLAYERS + 1> prev_a_pressed{};
+    std::array<bool, NUM_PLAYERS + 1> prev_b_pressed{};
+
+    QTimer* stick_poll_timer = nullptr;
 };
 
 class QtControllerSelector final : public QObject, public Core::Frontend::ControllerApplet {

@@ -23,9 +23,11 @@ constexpr int name_column = 0;
 constexpr int hotkey_column = 1;
 constexpr int controller_column = 2;
 
-ConfigureHotkeys::ConfigureHotkeys(Core::HID::HIDCore& hid_core, QWidget* parent)
+ConfigureHotkeys::ConfigureHotkeys(Core::HID::HIDCore& hid_core, bool emulation_running_,
+                                   QWidget* parent)
     : QWidget(parent), ui(std::make_unique<Ui::ConfigureHotkeys>()),
-      timeout_timer(std::make_unique<QTimer>()), poll_timer(std::make_unique<QTimer>()) {
+      emulation_running(emulation_running_), timeout_timer(std::make_unique<QTimer>()),
+      poll_timer(std::make_unique<QTimer>()) {
     ui->setupUi(this);
     setFocusPolicy(Qt::ClickFocus);
 
@@ -159,6 +161,13 @@ void ConfigureHotkeys::Configure(QModelIndex index) {
     }
 }
 void ConfigureHotkeys::ConfigureController(QModelIndex index) {
+    if (emulation_running) {
+        QMessageBox::information(
+            this, tr("Controller Hotkey"),
+            tr("Controller hotkeys cannot be configured while a game is running.\n"
+               "Stop the game first, then open Settings to assign controller hotkeys."));
+        return;
+    }
     if (timeout_timer->isActive()) {
         return;
     }
