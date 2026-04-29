@@ -576,11 +576,15 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             if (!joystick->GetSDLJoystick()) {
                 continue;
             }
-            const std::string name =
-                fmt::format("{} {}", joystick->GetControllerName(), joystick->GetPort());
+            const std::string raw_ctrl_name = joystick->GetControllerName();
+            std::string ctrl_name = raw_ctrl_name;
+            if (const auto p = ctrl_name.find(" Controller"); p != std::string::npos)
+                ctrl_name.erase(p, 11);
+            const std::string display_name = fmt::format("{} {}", ctrl_name, joystick->GetPort());
             devices.emplace_back(Common::ParamPackage{
                 {"engine", GetEngineName()},
-                {"display", std::move(name)},
+                {"display", display_name},
+                {"raw", raw_ctrl_name},
                 {"guid", joystick->GetGUID().RawString()},
                 {"port", std::to_string(joystick->GetPort())},
             });
@@ -604,6 +608,7 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
                 devices.emplace_back(Common::ParamPackage{
                     {"engine", GetEngineName()},
                     {"display", std::move(name)},
+                    {"raw", "Nintendo Dual Joy-Con"},
                     {"guid", joystick->GetGUID().RawString()},
                     {"guid2", joystick2->GetGUID().RawString()},
                     {"port", std::to_string(joystick->GetPort())},
@@ -611,6 +616,24 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             }
         }
     }
+
+    // Reassign display names using a global counter per base name so they are unique
+    // program-wide even when controllers from different manufacturers share an SDL name.
+    // Port numbers are per-GUID in SDL, so two different-model controllers can both be
+    // port 0 — using port as the display suffix produces duplicates. Identity (guid+port)
+    // is not affected; only the cosmetic display string is changed here.
+    {
+        ankerl::unordered_dense::map<std::string, int> counter;
+        for (auto& pkg : devices) {
+            std::string base = pkg.Get("raw", "");
+            if (base.empty())
+                base = pkg.Get("display", "Unknown");
+            if (const auto p = base.find(" Controller"); p != std::string::npos)
+                base.erase(p, 11);
+            pkg.Set("display", fmt::format("{} {}", base, counter[base]++));
+        }
+    }
+
     return devices;
 }
 

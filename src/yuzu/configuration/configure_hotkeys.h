@@ -28,7 +28,8 @@ class ConfigureHotkeys : public QWidget {
     Q_OBJECT
 
 public:
-    explicit ConfigureHotkeys(Core::HID::HIDCore& hid_core_, QWidget* parent = nullptr);
+    explicit ConfigureHotkeys(Core::HID::HIDCore& hid_core_, bool emulation_running_ = false,
+                              QWidget* parent = nullptr);
     ~ConfigureHotkeys() override;
 
     void ApplyConfiguration(HotkeyRegistry& registry);
@@ -67,6 +68,7 @@ private:
     QModelIndex button_model_index;
     Core::HID::NpadButton pressed_buttons;
 
+    bool emulation_running;
     Core::HID::EmulatedController* controller;
     std::unique_ptr<QTimer> timeout_timer;
     std::unique_ptr<QTimer> poll_timer;

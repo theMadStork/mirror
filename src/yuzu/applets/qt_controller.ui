@@ -86,12 +86,6 @@
              <height>70</height>
             </size>
            </property>
-           <property name="maximumSize">
-            <size>
-             <width>70</width>
-             <height>70</height>
-            </size>
-           </property>
            <layout class="QVBoxLayout" name="verticalLayout_21">
             <property name="leftMargin">
              <number>0</number>
@@ -108,12 +102,6 @@
             <item>
              <widget class="QLabel" name="controllersSupportedLabel">
               <property name="minimumSize">
-               <size>
-                <width>70</width>
-                <height>70</height>
-               </size>
-              </property>
-              <property name="maximumSize">
                <size>
                 <width>70</width>
                 <height>70</height>
@@ -372,12 +360,6 @@
                   <height>100</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
                 <property name="title">
                  <string/>
                 </property>
@@ -475,12 +457,6 @@
                   <height>10</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
                 <layout class="QVBoxLayout" name="verticalLayout_39">
                  <property name="spacing">
                   <number>0</number>
@@ -564,12 +540,6 @@
               <item alignment="Qt::AlignHCenter">
                <widget class="QGroupBox" name="groupPlayer2Connected">
                 <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
                  <size>
                   <width>100</width>
                   <height>100</height>
@@ -672,12 +642,6 @@
                   <height>10</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
                 <layout class="QVBoxLayout" name="verticalLayout_37">
                  <property name="spacing">
                   <number>0</number>
@@ -761,12 +725,6 @@
               <item alignment="Qt::AlignHCenter">
                <widget class="QGroupBox" name="groupPlayer1Connected">
                 <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
                  <size>
                   <width>100</width>
                   <height>100</height>
@@ -871,12 +829,6 @@
                  <size>
                   <width>0</width>
                   <height>10</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
                  </size>
                 </property>
                 <layout class="QVBoxLayout" name="verticalLayout_36">
@@ -1080,12 +1032,6 @@
                   <height>100</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
                 <property name="title">
                  <string/>
                 </property>
@@ -1181,12 +1127,6 @@
                  <size>
                   <width>0</width>
                   <height>10</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
                  </size>
                 </property>
                 <layout class="QVBoxLayout" name="verticalLayout_38">
@@ -1317,12 +1257,6 @@
                   <height>100</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
                 <property name="title">
                  <string/>
                 </property>
@@ -1420,12 +1354,6 @@
                   <height>10</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
                 <layout class="QVBoxLayout" name="verticalLayout_42">
                  <property name="spacing">
                   <number>0</number>
@@ -1509,12 +1437,6 @@
               <item alignment="Qt::AlignHCenter">
                <widget class="QGroupBox" name="groupPlayer8Connected">
                 <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
                  <size>
                   <width>100</width>
                   <height>100</height>
@@ -1617,12 +1539,6 @@
                   <height>10</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
                 <layout class="QVBoxLayout" name="verticalLayout_35">
                  <property name="spacing">
                   <number>0</number>
@@ -1706,12 +1622,6 @@
               <item alignment="Qt::AlignHCenter">
                <widget class="QGroupBox" name="groupPlayer5Connected">
                 <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
                  <size>
                   <width>100</width>
                   <height>100</height>
@@ -1818,12 +1728,6 @@
                   <height>10</height>
                  </size>
                 </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
                 <layout class="QVBoxLayout" name="verticalLayout_40">
                  <property name="spacing">
                   <number>0</number>
@@ -1907,12 +1811,6 @@
               <item alignment="Qt::AlignHCenter">
                <widget class="QGroupBox" name="groupPlayer6Connected">
                 <property name="minimumSize">
-                 <size>
-                  <width>100</width>
-                  <height>100</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
                  <size>
                   <width>100</width>
                   <height>100</height>
@@ -2013,12 +1911,6 @@
                  <size>
                   <width>0</width>
                   <height>10</height>
-                 </size>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
                  </size>
                 </property>
                 <layout class="QVBoxLayout" name="verticalLayout_41">
@@ -2336,12 +2228,6 @@
                 <height>0</height>
                </size>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>68</width>
-                <height>16777215</height>
-               </size>
-              </property>
               <property name="styleSheet">
                <string notr="true">min-width: 68px;</string>
               </property>
@@ -2382,12 +2268,6 @@
                 <height>0</height>
                </size>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>68</width>
-                <height>16777215</height>
-               </size>
-              </property>
               <property name="styleSheet">
                <string notr="true">min-width: 68px;</string>
               </property>
@@ -2419,12 +2299,6 @@
             </property>
             <item>
              <widget class="QPushButton" name="inputConfigButton">
-              <property name="maximumSize">
-               <size>
-                <width>68</width>
-                <height>16777215</height>
-               </size>
-              </property>
               <property name="styleSheet">
                <string notr="true">min-width: 68px;</string>
               </property>

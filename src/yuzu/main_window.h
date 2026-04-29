@@ -24,6 +24,7 @@
 #include "input_common/drivers/tas_input.h"
 #include "qt_common/config/qt_config.h"
 #include "qt_common/util/game.h"
+#include "core/frontend/applets/controller.h"
 #include "yuzu/compatibility_list.h"
 #include "yuzu/hotkeys.h"
 #include "yuzu/user_data_migration.h"
@@ -80,7 +81,6 @@ enum class SystemResultStatus : u32;
 
 namespace Core::Frontend {
 struct CabinetParameters;
-struct ControllerParameters;
 struct InlineAppearParameters;
 struct InlineTextParameters;
 struct KeyboardInitializeParameters;
@@ -374,6 +374,7 @@ private slots:
     void OnMenuInstallToNAND();
     void OnMenuRecentFile();
     void OnConfigure();
+    void OnOpenControllerApplet();
     void OnConfigureTas();
     void OnDecreaseVolume();
     void OnIncreaseVolume();
@@ -574,6 +575,7 @@ private:
     // Applets
     QtAmiiboSettingsDialog* cabinet_applet = nullptr;
     QtControllerSelectorDialog* controller_applet = nullptr;
+    std::optional<Core::Frontend::ControllerParameters> last_game_controller_params;
     QtProfileSelectionDialog* profile_select_applet = nullptr;
     QDialog* error_applet = nullptr;
     QtSoftwareKeyboardDialog* software_keyboard = nullptr;

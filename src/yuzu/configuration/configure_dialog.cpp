@@ -56,7 +56,7 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
               ui_tab->UpdateScreenshotInfo(ratio, setup);
           },
           nullptr, *builder, this)},
-      hotkeys_tab{std::make_unique<ConfigureHotkeys>(system_.HIDCore(), this)},
+      hotkeys_tab{std::make_unique<ConfigureHotkeys>(system_.HIDCore(), system_.IsPoweredOn(), this)},
       input_tab{std::make_unique<ConfigureInput>(system_, this)},
       network_tab{std::make_unique<ConfigureNetwork>(system_, this)},
       profile_tab{std::make_unique<ConfigureProfileManager>(system_, this)},

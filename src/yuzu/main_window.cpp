@@ -743,6 +743,7 @@ void MainWindow::AmiiboSettingsRequestExit() {
 
 void MainWindow::ControllerSelectorReconfigureControllers(
     const Core::Frontend::ControllerParameters& parameters) {
+    last_game_controller_params = parameters;
     controller_applet =
         new QtControllerSelectorDialog(this, parameters, input_subsystem.get(), *QtCommon::system);
     SCOPE_EXIT {
@@ -752,7 +753,7 @@ void MainWindow::ControllerSelectorReconfigureControllers(
 
     controller_applet->setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint |
                                       Qt::WindowStaysOnTopHint | Qt::WindowTitleHint |
-                                      Qt::WindowSystemMenuHint);
+                                      Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
     controller_applet->setWindowModality(Qt::WindowModal);
     bool is_success = controller_applet->exec() != QDialog::Rejected;
 
@@ -1477,6 +1478,8 @@ void MainWindow::InitializeHotkeys() {
             render_window->setAttribute(Qt::WA_Hover, true);
         }
     });
+
+    connect_shortcut(QStringLiteral("Configure Input"), &MainWindow::OnOpenControllerApplet);
 }
 
 void MainWindow::SetDefaultUIGeometry() {
@@ -3519,6 +3522,36 @@ void MainWindow::ToggleShowGameName() {
     CheckIconSize();
 
     game_list->RefreshGameDirectory();
+}
+
+void MainWindow::OnOpenControllerApplet() {
+    if (!emulation_running) {
+        return;
+    }
+    // Use the game's own parameters if available so blue rings show the correct required slots.
+    // Fall back to permissive defaults if no game has requested controller config yet.
+    Core::Frontend::ControllerParameters params =
+        last_game_controller_params.value_or(Core::Frontend::ControllerParameters{
+            .min_players = 1,
+            .max_players = 8,
+            .keep_controllers_connected = true,
+            .enable_single_mode = false,
+            .allow_pro_controller = true,
+            .allow_handheld = true,
+            .allow_dual_joycons = true,
+            .allow_left_joycon = true,
+            .allow_right_joycon = true,
+            .allow_gamecube_controller = true,
+        });
+    params.keep_controllers_connected = true;
+    QtControllerSelectorDialog dialog(this, std::move(params), input_subsystem.get(),
+                                      *QtCommon::system);
+    dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowStaysOnTopHint |
+                          Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
+    dialog.setWindowModality(Qt::WindowModal);
+    dialog.SetForceShow();
+    dialog.exec();
+    QtCommon::system->HIDCore().DisableAllControllerConfiguration();
 }
 
 void MainWindow::OnConfigure() {

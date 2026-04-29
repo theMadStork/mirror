@@ -72,17 +72,22 @@ void ControllerNavigation::ControllerUpdateButton() {
     case Core::HID::NpadStyleIndex::GameCube:
         TriggerButton(Settings::NativeButton::A, Qt::Key_Enter);
         TriggerButton(Settings::NativeButton::B, Qt::Key_Escape);
+        TriggerButton(Settings::NativeButton::X, Qt::Key_X);
+        TriggerButton(Settings::NativeButton::Y, Qt::Key_Y);
+        TriggerButton(Settings::NativeButton::L, Qt::Key_PageUp);
+        TriggerButton(Settings::NativeButton::R, Qt::Key_PageDown);
         TriggerButton(Settings::NativeButton::DDown, Qt::Key_Down);
         TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Left);
         TriggerButton(Settings::NativeButton::DRight, Qt::Key_Right);
         TriggerButton(Settings::NativeButton::DUp, Qt::Key_Up);
+        TriggerButton(Settings::NativeButton::Plus, Qt::Key_Return);
         break;
     case Core::HID::NpadStyleIndex::JoyconLeft:
         TriggerButton(Settings::NativeButton::DDown, Qt::Key_Enter);
         TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Escape);
         break;
     case Core::HID::NpadStyleIndex::JoyconRight:
-        TriggerButton(Settings::NativeButton::X, Qt::Key_Enter);
+        TriggerButton(Settings::NativeButton::X, Qt::Key_X);
         TriggerButton(Settings::NativeButton::A, Qt::Key_Escape);
         break;
     default:
@@ -93,7 +98,7 @@ void ControllerNavigation::ControllerUpdateButton() {
 void ControllerNavigation::ControllerUpdateStick() {
     const auto controller_type = player1_controller->GetNpadStyleIndex();
     const auto& player1_sticks = player1_controller->GetSticksValues();
-    const auto& handheld_sticks = player1_controller->GetSticksValues();
+    const auto& handheld_sticks = handheld_controller->GetSticksValues();
     bool update = false;
 
     for (std::size_t i = 0; i < player1_sticks.size(); ++i) {
