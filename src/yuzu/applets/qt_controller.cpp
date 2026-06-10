@@ -250,7 +250,6 @@ QtControllerSelectorDialog::QtControllerSelectorDialog(
     }
 
     LoadConfiguration();
-    RefreshPrePopulate();
 
     controller_navigation = new ControllerNavigation(system.HIDCore(), this);
 
@@ -265,6 +264,17 @@ QtControllerSelectorDialog::QtControllerSelectorDialog(
             {
                 QSignalBlocker blocker(connected_controller_checkboxes[i]);
                 connected_controller_checkboxes[i]->setChecked(checked);
+            }
+
+            if (checked && input_device_combos[i]) {
+                // Apply the slot's device mapping before UpdateControllerState connects the
+                // emulated controller, so it never goes live with stale pre-routed params.
+                // Auto-assign covers connects that arrive without a device (mouse/checkbox).
+                if (input_device_combos[i]->currentIndex() >= 0) {
+                    ApplyInputDevice(i);
+                } else {
+                    AutoAssignInputDevice(i);
+                }
             }
 
             UpdateControllerIcon(i);
@@ -550,6 +560,10 @@ QtControllerSelectorDialog::QtControllerSelectorDialog(
                         }
                     }
                     ApplyInputDevice(i);
+                    // Re-route any device displaced by this change so its button presses
+                    // still reach the HID callbacks (otherwise X-cycling a slot's device
+                    // leaves the old pad completely unresponsive).
+                    RefreshPrePopulate();
                 });
     }
 
@@ -581,6 +595,11 @@ QtControllerSelectorDialog::QtControllerSelectorDialog(
             player_groupboxes[i]->setChecked(false);
         }
     }
+
+    // At-open pre-populate. Must run after cached_input_devices and the device combos
+    // exist — otherwise idle pads are never routed to disconnected slots and their
+    // A/B presses never reach the HID callbacks.
+    RefreshPrePopulate();
 
     // Poll left-stick positions at 20 Hz to update the indicators.
     stick_poll_timer = new QTimer(this);
@@ -779,19 +798,26 @@ void QtControllerSelectorDialog::keyPressEvent(QKeyEvent* evt) {
         accept();
         return;
 
-    case Qt::Key_Enter: { // A button → connect focused player, or confirm if OK focused
+    case Qt::Key_Enter: { // A button → confirm when OK is focused.
+        // Slot connects are NOT handled here: every physical pad's A press reaches
+        // OnPlayerButtonA via its per-slot HID callback, which knows which device
+        // pressed. This navigation path doesn't — P1's A also arrives here as
+        // Key_Enter, and claiming the focused slot would connect whatever idle
+        // device happens to be pre-routed there (double/phantom connects).
         if (focused_button == FocusedButton::OK) {
             ApplyConfiguration();
             accept();
-        } else if (focused_player_index < NUM_PLAYERS) {
-            OnPlayerButtonA(focused_player_index);
         }
         return;
     }
 
-    case Qt::Key_Escape: // B → disconnect focused connected slot; fallback to P1 self-disconnect
-        if (focused_player_index < NUM_PLAYERS &&
-            player_groupboxes[focused_player_index]->isChecked()) {
+    case Qt::Key_Escape: // B → back out of button row, else disconnect focused connected slot
+        if (focused_button != FocusedButton::None) {
+            // SetFocusedButton parks focused_player_index at the NUM_PLAYERS sentinel,
+            // which the "waiting for P1" fallback below would misread as P1 self-disconnect.
+            SetFocusedPlayer(last_focused_player);
+        } else if (focused_player_index < NUM_PLAYERS &&
+                   player_groupboxes[focused_player_index]->isChecked()) {
             OnPlayerButtonB(focused_player_index);
         } else if (focused_player_index >= NUM_PLAYERS && player_groupboxes[0]->isChecked()) {
             OnPlayerButtonB(0);
@@ -1389,15 +1415,16 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
         device_idx = RegisterUnknownDevice(pressed_guid, pressed_port, raw);
     }
 
-    // Connect the target slot (fires toggled which handles HID + UI updates).
-    player_groupboxes[target_slot]->setChecked(true);
-
-    // Assign the specific physical device to this slot.
-    if (device_idx >= 0 && input_device_combos[target_slot]) {
+    // Stage the pressing device in the slot's combo BEFORE connecting. ApplyInputDevice
+    // no-ops while the slot is disconnected; the toggled handler below applies the
+    // mapping, so the emulated controller never connects with stale pre-routed params.
+    if (device_idx >= 0 && input_device_combos[target_slot] &&
+        input_device_combos[target_slot]->currentIndex() != device_idx) {
         input_device_combos[target_slot]->setCurrentIndex(device_idx);
-    } else {
-        AutoAssignInputDevice(target_slot);
     }
+
+    // Connect the target slot (fires toggled, which applies the device and syncs HID + UI).
+    player_groupboxes[target_slot]->setChecked(true);
 
     // P1 takes over gamepad focus.
     if (target_slot == 0) {
