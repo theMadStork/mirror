@@ -17,6 +17,11 @@
 #include "common/param_package.h"
 #include "core/frontend/applets/controller.h"
 
+struct DeviceEntry {
+    std::string raw_name;
+    std::string display_name;
+};
+
 class MainWindow;
 class QCheckBox;
 class QComboBox;
@@ -115,10 +120,6 @@ private:
     // Updates the console mode.
     void UpdateDockedState(bool is_handheld);
 
-    // Enable preceding controllers or disable following ones
-    void PropagatePlayerNumberChanged(size_t player_index, bool checked,
-                                      bool reconnect_current = false);
-
     // Disables and disconnects unsupported players based on the given parameters.
     void DisableUnsupportedPlayers();
 
@@ -134,6 +135,25 @@ private:
 
     // Applies the selected physical input device mappings to a player's controller.
     void ApplyInputDevice(std::size_t player_index);
+
+    // Picks a free input device for a newly-connected player slot if none is assigned.
+    // Priority: free gamepad → keyboard → keyboard+mouse.
+    void AutoAssignInputDevice(std::size_t player_index);
+
+    // Syncs combo boxes for connected slots with their EmulatedController button params,
+    // then assigns button params to disconnected slots for any unrouted physical devices
+    // so their A/B presses reach HID callbacks even before they claim a slot.
+    // Called at open, after every connect, and after every disconnect.
+    void RefreshPrePopulate();
+
+    // Builds the GUID+port→{raw,display} name map from cached_input_devices.
+    // Always rebuilt fresh each session; removes any stale on-disk file.
+    void BuildDeviceNameMap();
+
+    // Called when A is pressed by a device not yet in cached_input_devices.
+    // Assigns a unique display name, appends to cached lists and all combo boxes.
+    int RegisterUnknownDevice(const std::string& guid, const std::string& port,
+                               const std::string& raw_name);
 
     // Called on the Qt thread when player N's physical controller presses A (connect) or B (disconnect).
     void OnPlayerButtonA(std::size_t player_index);
@@ -158,6 +178,10 @@ private:
 
     // When true, exec() shows the dialog even when parameters are already met.
     bool force_show{false};
+
+    // Suppresses Key_Return confirm briefly after open so a held + from the opening
+    // hotkey combo doesn't immediately close the dialog.
+    bool suppress_confirm{false};
 
     // Index of the player slot currently highlighted by gamepad navigation.
     // Initialised to NUM_PLAYERS (sentinel for "none") until SetFocusedPlayer is called.
@@ -214,6 +238,11 @@ private:
 
     // Deduplicated display labels for cached_input_devices (same index).
     std::vector<std::string> cached_device_labels;
+
+    // Persistent map of GUID → {raw_name, display_name}.
+    // Loaded from {CacheDir}/controller_applet/device_names.json on open,
+    // saved on OK (not cancel).
+    std::map<std::string, DeviceEntry> device_name_map;
 
     // Callback keys for per-player A/B claim detection (index NUM_PLAYERS = Handheld → slot 0).
     std::array<int, NUM_PLAYERS> player_claim_callback_keys{};

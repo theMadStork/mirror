@@ -640,7 +640,7 @@ void MainWindow::ControllerSelectorReconfigureControllers(
 
     controller_applet->setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint |
                                       Qt::WindowStaysOnTopHint | Qt::WindowTitleHint |
-                                      Qt::WindowSystemMenuHint);
+                                      Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
     controller_applet->setWindowModality(Qt::WindowModal);
     bool is_success = controller_applet->exec() != QDialog::Rejected;
 
@@ -3378,11 +3378,12 @@ void MainWindow::OnOpenControllerApplet() {
             .allow_right_joycon = true,
             .allow_gamecube_controller = true,
         });
+    // Load existing configured state; new controllers join live by pressing A into empty slots.
     params.keep_controllers_connected = true;
     QtControllerSelectorDialog dialog(this, std::move(params), input_subsystem.get(),
                                       *QtCommon::system);
     dialog.setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowStaysOnTopHint |
-                          Qt::WindowTitleHint | Qt::WindowSystemMenuHint);
+                          Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint);
     dialog.setWindowModality(Qt::WindowModal);
     dialog.SetForceShow();
     dialog.exec();

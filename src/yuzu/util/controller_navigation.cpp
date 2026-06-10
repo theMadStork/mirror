@@ -9,6 +9,7 @@
 ControllerNavigation::ControllerNavigation(Core::HID::HIDCore& hid_core, QWidget* parent) {
     player1_controller = hid_core.GetEmulatedController(Core::HID::NpadIdType::Player1);
     handheld_controller = hid_core.GetEmulatedController(Core::HID::NpadIdType::Handheld);
+
     Core::HID::ControllerUpdateCallback engine_callback{
         .on_change = [this](Core::HID::ControllerTriggerType type) { ControllerUpdateEvent(type); },
         .is_npad_service = false,
@@ -72,6 +73,7 @@ void ControllerNavigation::ControllerUpdateButton() {
     case Core::HID::NpadStyleIndex::GameCube:
         TriggerButton(Settings::NativeButton::A, Qt::Key_Enter);
         TriggerButton(Settings::NativeButton::B, Qt::Key_Escape);
+        TriggerButton(Settings::NativeButton::X, Qt::Key_X);
         TriggerButton(Settings::NativeButton::Y, Qt::Key_Y);
         TriggerButton(Settings::NativeButton::L, Qt::Key_PageUp);
         TriggerButton(Settings::NativeButton::R, Qt::Key_PageDown);

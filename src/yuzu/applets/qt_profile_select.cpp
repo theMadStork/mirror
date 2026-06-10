@@ -28,10 +28,9 @@
 
 namespace {
 QString FormatUserEntryText(const QString& username, Common::UUID uuid) {
-    return QtProfileSelectionDialog::tr(
-               "%1\n%2", "%1 is the profile username, %2 is the formatted UUID (e.g. "
-                         "00112233-4455-6677-8899-AABBCCDDEEFF))")
-        .arg(username, QString::fromStdString(uuid.FormattedString()));
+    if (!username.isEmpty())
+        return username;
+    return QString::fromStdString(uuid.FormattedString());
 }
 
 QString GetImagePath(Common::UUID uuid) {
