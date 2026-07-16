@@ -5,11 +5,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
+#include <QByteArray>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -38,6 +42,24 @@
 #include "qt_common/game_list/worker.h"
 
 namespace {
+
+std::filesystem::path GetPathCachePath() {
+    return Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "game_list" /
+           "path_cache.json";
+}
+
+std::string IconToBase64(const std::vector<u8>& bytes) {
+    return QByteArray(reinterpret_cast<const char*>(bytes.data()),
+                      static_cast<int>(bytes.size()))
+        .toBase64()
+        .toStdString();
+}
+
+std::vector<u8> Base64ToIcon(const std::string& b64) {
+    const auto ba = QByteArray::fromBase64(QByteArray::fromStdString(b64));
+    return std::vector<u8>(reinterpret_cast<const u8*>(ba.constData()),
+                           reinterpret_cast<const u8*>(ba.constData()) + ba.size());
+}
 
 QString GetGameListCachedObject(const std::string& filename, const std::string& ext,
                                 const std::function<QString()>& generator) {
@@ -242,6 +264,86 @@ GameListWorker::~GameListWorker() {
     processing_completed.Wait();
 }
 
+void GameListWorker::LoadPathCache() {
+    const auto cache_path = GetPathCachePath();
+    if (!std::filesystem::exists(cache_path)) {
+        return;
+    }
+    try {
+        std::ifstream file(cache_path, std::ios::binary);
+        if (!file) {
+            return;
+        }
+        nlohmann::json json;
+        file >> json;
+        if (!json.is_object()) {
+            return;
+        }
+        for (auto& [path_key, entry_json] : json.items()) {
+            if (!entry_json.is_object() || !entry_json.contains("games") ||
+                !entry_json["games"].is_array()) {
+                continue;
+            }
+            PathCacheEntry entry;
+            entry.mtime = entry_json.value("mtime", int64_t{0});
+            entry.size = entry_json.value("size", uint64_t{0});
+            for (const auto& game_json : entry_json["games"]) {
+                if (!game_json.is_object()) {
+                    continue;
+                }
+                PathCacheGame game;
+                game.program_id = game_json.value("program_id", uint64_t{0});
+                game.name = game_json.value("name", std::string{});
+                game.file_type = game_json.value("file_type", std::string{});
+                if (game_json.contains("icon") && game_json["icon"].is_string()) {
+                    game.icon = Base64ToIcon(game_json["icon"].get<std::string>());
+                }
+                entry.games.push_back(std::move(game));
+            }
+            path_cache[path_key] = std::move(entry);
+        }
+    } catch (const std::exception& e) {
+        LOG_WARNING(Frontend, "Failed to load game list path cache: {}", e.what());
+        path_cache.clear();
+    }
+}
+
+void GameListWorker::SavePathCache() {
+    if (!path_cache_dirty) {
+        return;
+    }
+    nlohmann::json json = nlohmann::json::object();
+    for (const auto& [path_key, entry] : path_cache) {
+        if (!std::filesystem::exists(path_key)) {
+            continue;
+        }
+        nlohmann::json entry_json;
+        entry_json["mtime"] = entry.mtime;
+        entry_json["size"] = entry.size;
+        entry_json["games"] = nlohmann::json::array();
+        for (const auto& game : entry.games) {
+            nlohmann::json game_json;
+            game_json["program_id"] = game.program_id;
+            game_json["name"] = game.name;
+            game_json["file_type"] = game.file_type;
+            game_json["icon"] = IconToBase64(game.icon);
+            entry_json["games"].push_back(std::move(game_json));
+        }
+        json[path_key] = std::move(entry_json);
+    }
+    const auto cache_path = GetPathCachePath();
+    void(Common::FS::CreateParentDirs(Common::FS::PathToUTF8String(cache_path)));
+    try {
+        std::ofstream file(cache_path, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (file) {
+            file << json.dump();
+        }
+    } catch (const std::exception& e) {
+        LOG_WARNING(Frontend, "Failed to save game list path cache: {}", e.what());
+    }
+    path_cache_dirty = false;
+}
+
 void GameListWorker::ProcessEvents(GameListModel* model) {
     while (true) {
         std::function<void(GameListModel*)> func;
@@ -344,6 +446,62 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
 
         if (!is_dir &&
             (HasSupportedFileExtension(physical_name) || IsExtractedNCAMain(physical_name))) {
+
+            // For PopulateGameList, check the path-based cache before opening the file.
+            // This avoids touching network-drive files on every launch.
+            int64_t cache_mtime = 0;
+            uint64_t cache_size = 0;
+            bool cache_stat_ok = false;
+
+            if (target == ScanTarget::PopulateGameList && UISettings::values.cache_game_list) {
+                std::error_code ec;
+                const auto fsz = std::filesystem::file_size(path, ec);
+                if (!ec) {
+                    const auto file_mtime = std::filesystem::last_write_time(path, ec);
+                    if (!ec) {
+                        cache_mtime = static_cast<int64_t>(file_mtime.time_since_epoch().count());
+                        cache_size = static_cast<uint64_t>(fsz);
+                        cache_stat_ok = true;
+
+                        const auto cache_it = path_cache.find(physical_name);
+                        if (cache_it != path_cache.end() &&
+                            cache_it->second.mtime == cache_mtime &&
+                            cache_it->second.size == cache_size &&
+                            !cache_it->second.games.empty()) {
+                            // Cache hit — emit entries without opening the ROM file.
+                            for (const auto& cg : cache_it->second.games) {
+                                const FileSys::PatchManager patch{
+                                    cg.program_id, system.GetFileSystemController(),
+                                    system.GetContentProvider()};
+                                // Use existing title-ID pv.txt cache; return "" if not yet written.
+                                const QString patch_versions = GetGameListCachedObject(
+                                    fmt::format("{:016X}", patch.GetTitleID()), "pv.txt",
+                                    [] { return QString{}; });
+                                const u64 play_time =
+                                    play_time_manager.GetPlayTime(cg.program_id);
+                                const auto ftstr = QString::fromStdString(cg.file_type);
+                                const auto icon = cg.icon;
+                                const auto name = cg.name;
+                                const auto pid = cg.program_id;
+                                auto entry = QList<QStandardItem*>{
+                                    new GameListItemPath(FormatGameName(physical_name), icon,
+                                                         QString::fromStdString(name), ftstr, pid,
+                                                         play_time, patch_versions),
+                                    new GameListItem(ftstr),
+                                    new GameListItemSize(cache_size),
+                                    new GameListItemPlayTime(play_time),
+                                    new GameListItem(patch_versions),
+                                };
+                                RecordEvent([=](GameListModel* model) {
+                                    model->AddEntry(entry, parent_dir);
+                                });
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+
             const auto file = vfs->OpenFile(physical_name, FileSys::OpenMode::Read);
             if (!file) {
                 return true;
@@ -382,14 +540,21 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                 std::vector<u64> program_ids;
                 loader->ReadProgramIds(program_ids);
 
-                const auto addEntry = [this, physical_name,
-                                       parent_dir](std::unique_ptr<Loader::AppLoader>& app_loader,
-                                                   const u64 id) {
+                PathCacheEntry new_cache;
+                new_cache.mtime = cache_mtime;
+                new_cache.size = cache_size;
+
+                const auto addEntry = [this, physical_name, parent_dir, &new_cache](
+                                          std::unique_ptr<Loader::AppLoader>& app_loader,
+                                          const u64 id) {
                     std::vector<u8> icon;
                     [[maybe_unused]] const auto res1 = app_loader->ReadIcon(icon);
 
                     std::string name = " ";
                     [[maybe_unused]] const auto res3 = app_loader->ReadTitle(name);
+
+                    const std::string file_type_str =
+                        Loader::GetFileTypeString(app_loader->GetFileType());
 
                     const FileSys::PatchManager patch{id, system.GetFileSystemController(),
                                                       system.GetContentProvider()};
@@ -399,6 +564,8 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                         id, play_time_manager, patch);
 
                     RecordEvent([=](GameListModel* model) { model->AddEntry(entry, parent_dir); });
+
+                    new_cache.games.push_back({id, name, file_type_str, icon});
                 };
 
                 if (res2 == Loader::ResultStatus::Success && program_ids.size() > 1 &&
@@ -419,6 +586,12 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
                 } else {
                     addEntry(loader, program_id);
                 }
+
+                if (cache_stat_ok && !new_cache.games.empty() &&
+                    UISettings::values.cache_game_list) {
+                    path_cache[physical_name] = std::move(new_cache);
+                    path_cache_dirty = true;
+                }
             }
         } else if (is_dir) {
             watch_list.append(QString::fromStdString(physical_name));
@@ -438,6 +611,7 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
 void GameListWorker::run() {
     watch_list.clear();
     provider->ClearAllEntries();
+    LoadPathCache();
 
     const auto DirEntryReady = [&](GameListDir* game_list_dir) {
         RecordEvent([=](GameListModel* model) { model->AddDirEntry(game_list_dir); });
@@ -478,6 +652,7 @@ void GameListWorker::run() {
         }
     }
 
+    SavePathCache();
     RecordEvent([this](GameListModel* model) { model->DonePopulating(watch_list); });
     processing_completed.Set();
 }

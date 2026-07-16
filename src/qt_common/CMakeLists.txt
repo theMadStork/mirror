@@ -87,6 +87,7 @@ target_compile_definitions(qt_common PUBLIC
 target_link_libraries(qt_common PRIVATE core Qt6::Core Qt6::Concurrent SimpleIni::SimpleIni QuaZip::QuaZip)
 target_link_libraries(qt_common PUBLIC frozen::frozen-headers Vulkan::Headers)
 target_link_libraries(qt_common PRIVATE gamemode::headers frontend_common)
+target_link_libraries(qt_common PRIVATE nlohmann_json::nlohmann_json)
 
 if (ENABLE_OPENGL)
     target_compile_definitions(qt_common PUBLIC HAS_OPENGL)

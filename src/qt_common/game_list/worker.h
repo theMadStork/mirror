@@ -7,9 +7,12 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <QList>
 #include <QObject>
@@ -94,4 +97,27 @@ private:
     Common::Event processing_completed;
 
     Core::System& system;
+
+    // Path-based metadata cache keyed on file path + mtime + size. Unchanged files are
+    // served from the cache without opening the ROM — important for game libraries on
+    // network drives or sync-managed folders, where every file open transfers header
+    // data or triggers sync activity. Gated on the cache_game_list setting.
+    struct PathCacheGame {
+        std::uint64_t program_id{};
+        std::string name;
+        std::string file_type;
+        std::vector<std::uint8_t> icon;
+    };
+
+    struct PathCacheEntry {
+        std::int64_t mtime{};
+        std::uint64_t size{};
+        std::vector<PathCacheGame> games;
+    };
+
+    void LoadPathCache();
+    void SavePathCache();
+
+    std::unordered_map<std::string, PathCacheEntry> path_cache;
+    bool path_cache_dirty{false};
 };
