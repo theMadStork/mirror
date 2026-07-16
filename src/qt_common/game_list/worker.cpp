@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -46,6 +47,18 @@ namespace {
 std::filesystem::path GetPathCachePath() {
     return Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "game_list" /
            "path_cache.json";
+}
+
+// Different views of the same file can round its timestamp differently (SMB vs local
+// NTFS vs on-demand sync placeholders, FAT's 2-second granularity). Treat mtimes within
+// 2 seconds as identical so a cache seeded through one view stays valid through another.
+bool MtimeMatches(int64_t a, int64_t b) {
+    static constexpr auto tolerance =
+        std::chrono::duration_cast<std::filesystem::file_time_type::duration>(
+            std::chrono::seconds(2))
+            .count();
+    const auto diff = a > b ? a - b : b - a;
+    return diff <= tolerance;
 }
 
 std::string IconToBase64(const std::vector<u8>& bytes) {
@@ -503,7 +516,7 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::string& dir_pa
             const auto cache_it = cache_stat_ok ? path_cache.find(physical_name)
                                                 : path_cache.end();
             const bool cache_unchanged = cache_it != path_cache.end() &&
-                                         cache_it->second.mtime == cache_mtime &&
+                                         MtimeMatches(cache_it->second.mtime, cache_mtime) &&
                                          cache_it->second.size == cache_size;
 
             if (target == ScanTarget::PopulateGameList && cache_unchanged &&
