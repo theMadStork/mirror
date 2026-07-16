@@ -79,6 +79,12 @@ public:
     explicit RenderWidget(GRenderWindow* parent) : QWidget(parent) {
         setAttribute(Qt::WA_NativeWindow);
         setAttribute(Qt::WA_PaintOnScreen);
+        // This native child covers the whole render area, so unpressed mouse moves are
+        // delivered here, not to the parent. Without tracking they are dropped entirely and
+        // the parent's MouseActivity never fires — the cursor stays hidden forever in
+        // windowed mode once the inactivity timer blanks it. With tracking on, the default
+        // handler ignores the move and Qt propagates it to GRenderWindow::mouseMoveEvent.
+        setMouseTracking(true);
         if (QtCommon::GetWindowSystemType() == Core::Frontend::WindowSystemType::Wayland) {
             setAttribute(Qt::WA_DontCreateNativeAncestors);
         }
