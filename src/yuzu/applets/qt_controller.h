@@ -150,8 +150,12 @@ private:
     // Always rebuilt fresh each session; removes any stale on-disk file.
     void BuildDeviceNameMap();
 
-    // Called when A is pressed by a device not yet in cached_input_devices.
-    // Assigns a unique display name, appends to cached lists and all combo boxes.
+    // Appends a freshly enumerated device to the cached lists and all combo boxes,
+    // assigning a unique display name. Returns its index in cached_input_devices.
+    int RegisterDevice(const Common::ParamPackage& dev);
+
+    // Called when A is pressed by a device not yet in cached_input_devices and not found
+    // by re-enumeration; registers a minimal placeholder entry.
     int RegisterUnknownDevice(const std::string& guid, const std::string& port,
                                const std::string& raw_name);
 

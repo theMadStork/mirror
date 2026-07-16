@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 
 #include "common/assert.h"
+#include "common/logging.h"
 #include "common/param_package.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -819,7 +820,10 @@ void QtControllerSelectorDialog::keyPressEvent(QKeyEvent* evt) {
         } else if (focused_player_index < NUM_PLAYERS &&
                    player_groupboxes[focused_player_index]->isChecked()) {
             OnPlayerButtonB(focused_player_index);
-        } else if (focused_player_index >= NUM_PLAYERS && player_groupboxes[0]->isChecked()) {
+        } else if (player_groupboxes[0]->isChecked()) {
+            // Focus is on an empty slot or the sentinel. Only P1's pad drives navigation,
+            // so this B came from P1 — treat it as self-disconnect, matching the per-pad
+            // B semantics every other player gets via their HID callback.
             OnPlayerButtonB(0);
         }
         return;
@@ -1360,6 +1364,14 @@ void QtControllerSelectorDialog::UpdateDockedState(bool is_handheld) {
 void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
     if (physical_slot >= NUM_PLAYERS) return;
 
+    // The pad that pressed A is the one driving this slot's emulated controller. If the
+    // slot is already connected, this pad already owns a player — A is a no-op. This holds
+    // regardless of GUID bookkeeping below, so an already-connected pad can never claim a
+    // second slot even when the cached device list disagrees with the stored mapping.
+    if (player_groupboxes[physical_slot]->isChecked()) {
+        return;
+    }
+
     // Get the identity of the physical controller that pressed A.
     const auto* phys_ctrl = system.HIDCore().GetEmulatedControllerByIndex(physical_slot);
     const auto btn_param = phys_ctrl->GetButtonParam(
@@ -1367,6 +1379,24 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
     const std::string pressed_guid   = btn_param.Get("guid",   "");
     const std::string pressed_port   = btn_param.Get("port",   "");
     const std::string pressed_engine = btn_param.Get("engine", "");
+
+    // Identity guard: if a connected slot's own mapping already points at this physical
+    // device, the pad is already a player. This can happen when the press arrives via a
+    // pre-routed idle slot while the owning slot's combo index is stale — compare against
+    // HID params directly instead of trusting combo indices.
+    if (!pressed_guid.empty()) {
+        for (std::size_t j = 0; j < NUM_PLAYERS; ++j) {
+            if (!player_groupboxes[j]->isChecked()) continue;
+            const auto owned = system.HIDCore().GetEmulatedControllerByIndex(j)->GetButtonParam(
+                static_cast<std::size_t>(Settings::NativeButton::A));
+            if (owned.Get("guid", "") == pressed_guid && owned.Get("port", "") == pressed_port) {
+                LOG_INFO(Frontend,
+                         "Controller applet: device {}:{} already owns player slot {}; ignoring A",
+                         pressed_guid, pressed_port, j + 1);
+                return;
+            }
+        }
+    }
 
     // Find this device in cached_input_devices.
     // Try exact GUID+port match first, then GUID-only fallback for keyboards/mice.
@@ -1385,6 +1415,29 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
                 device_idx = d;
                 break;
             }
+        }
+    }
+
+    // Cache miss: the device may have been hot-plugged after the dialog opened, or its
+    // GUID may have changed across driver generations (e.g. SDL2-era configs on the SDL3
+    // backend). Re-enumerate and register it under its real name instead of falling
+    // through to the engine-name placeholder.
+    if (device_idx < 0 && !pressed_guid.empty()) {
+        const auto fresh_devices = input_subsystem->GetInputDevices();
+        const Common::ParamPackage* found = nullptr;
+        for (const auto& dev : fresh_devices) {
+            if (dev.Get("guid", "") != pressed_guid) continue;
+            if (dev.Get("port", "") == pressed_port) {
+                found = &dev;
+                break;
+            }
+            if (!found) found = &dev;
+        }
+        if (found) {
+            LOG_INFO(Frontend,
+                     "Controller applet: registering late-enumerated device {}:{} ('{}')",
+                     pressed_guid, pressed_port, found->Get("raw", ""));
+            device_idx = RegisterDevice(*found);
         }
     }
 
@@ -1412,6 +1465,10 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
     // Device-not-found edge case: register it so it gets a unique display name.
     if (device_idx < 0 && !pressed_guid.empty()) {
         const std::string raw = btn_param.Get("display", pressed_engine);
+        LOG_WARNING(Frontend,
+                    "Controller applet: device {}:{} absent from device list even after "
+                    "re-enumeration; falling back to placeholder name '{}'",
+                    pressed_guid, pressed_port, raw);
         device_idx = RegisterUnknownDevice(pressed_guid, pressed_port, raw);
     }
 
@@ -1569,13 +1626,17 @@ void QtControllerSelectorDialog::BuildDeviceNameMap() {
     }
 }
 
-int QtControllerSelectorDialog::RegisterUnknownDevice(const std::string& guid,
-                                                       const std::string& port,
-                                                       const std::string& raw_name) {
+int QtControllerSelectorDialog::RegisterDevice(const Common::ParamPackage& dev) {
+    const std::string guid     = dev.Get("guid", "");
+    const std::string port     = dev.Get("port", "");
+    const std::string raw_name = dev.Get("raw", dev.Get("display", "Unknown"));
+
     const std::string key  = guid + ":" + port;
     const std::string base = StripControllerWord(raw_name);
     // Count existing entries with the same base to assign the next unique index,
-    // consistent with BuildDeviceNameMap's global counter.
+    // consistent with BuildDeviceNameMap's global counter. The display name from a fresh
+    // GetInputDevices() call cannot be used verbatim: its per-call counter restarts at 0,
+    // so it may collide with a label already in the combos.
     int n = 0;
     for (const auto& [k, e] : device_name_map) {
         if (StripControllerWord(e.raw_name) == base) ++n;
@@ -1584,12 +1645,9 @@ int QtControllerSelectorDialog::RegisterUnknownDevice(const std::string& guid,
     device_name_map[key] = {raw_name, display};
 
     // Append to cached lists so existing combo indices remain valid.
-    Common::ParamPackage pkg;
-    pkg.Set("guid", guid);
-    pkg.Set("port", port);
+    Common::ParamPackage pkg = dev;
     pkg.Set("display", display);
     pkg.Set("raw", raw_name);
-    pkg.Set("engine", "sdl");
     const int new_idx = static_cast<int>(cached_input_devices.size());
     cached_input_devices.push_back(pkg);
     cached_device_labels.push_back(display);
@@ -1601,6 +1659,17 @@ int QtControllerSelectorDialog::RegisterUnknownDevice(const std::string& guid,
         input_device_combos[i]->addItem(QString::fromStdString(display));
     }
     return new_idx;
+}
+
+int QtControllerSelectorDialog::RegisterUnknownDevice(const std::string& guid,
+                                                       const std::string& port,
+                                                       const std::string& raw_name) {
+    Common::ParamPackage pkg;
+    pkg.Set("guid", guid);
+    pkg.Set("port", port);
+    pkg.Set("raw", raw_name);
+    pkg.Set("engine", "sdl");
+    return RegisterDevice(pkg);
 }
 
 void QtControllerSelectorDialog::DisableUnsupportedPlayers() {
