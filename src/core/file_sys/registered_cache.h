@@ -53,6 +53,19 @@ struct ContentProviderEntry {
     std::string DebugInfo() const;
 };
 
+// Metadata describing one entry inside a game container (NSP/XCI), sufficient to
+// re-register the entry later without parsing the container. Used by frontends to
+// cache container contents so unchanged files are not opened on every scan.
+struct DeferredContainerEntry {
+    u64 title_id{};
+    TitleType title_type{};
+    ContentRecordType content_type{};
+    u32 version{};
+    std::string version_string;
+    std::string entry_name;
+    u64 entry_size{};
+};
+
 struct ExternalUpdateEntry {
     u64 title_id;
     u32 version;
@@ -265,7 +278,21 @@ public:
     void AddEntryWithVersion(TitleType title_type, ContentRecordType content_type, u64 title_id,
                              u32 version, const std::string& version_string, VirtualFile file);
     bool AddEntriesFromContainer(VirtualFile file, bool only_content = false,
-                                 std::optional<u64> base_program_id = std::nullopt);
+                                 std::optional<u64> base_program_id = std::nullopt,
+                                 std::vector<DeferredContainerEntry>* out_entries = nullptr);
+
+    // Registers a single entry whose backing file is opened lazily on first access.
+    // No I/O happens at registration time.
+    void AddDeferredEntry(TitleType title_type, ContentRecordType content_type, u64 title_id,
+                          std::string entry_name, u64 entry_size,
+                          std::function<VirtualFile()> open_file);
+
+    // Re-registers container entries captured earlier by AddEntriesFromContainer without
+    // opening the container. The container is opened and parsed at most once, on the first
+    // read of any of its entries.
+    void AddDeferredContainerEntries(std::function<VirtualFile()> open_container,
+                                     const std::vector<DeferredContainerEntry>& deferred_entries);
+
     void ClearAllEntries();
 
     void Refresh() override;

@@ -109,10 +109,33 @@ private:
         std::vector<std::uint8_t> icon;
     };
 
+    // What the content-provider pass learned about this file. Unchanged files replay
+    // their provider registrations with lazily opened backing files, so the scan itself
+    // performs no reads — containers are only parsed when a game actually uses an entry.
+    enum class ProviderCacheKind : std::uint8_t {
+        NotScanned = 0,       // cache entry predates provider caching — needs a real scan
+        None = 1,             // file registers no provider content
+        Container = 2,        // XCI/NSP whose entries are captured in provider_entries
+        ContainerSkipped = 3, // container not parsed because ext_content_from_game_dirs was off
+        Nca = 4,              // standalone NCA entry captured in provider_entries[0]
+    };
+
+    struct PathCacheProviderEntry {
+        std::uint64_t title_id{};
+        std::uint8_t title_type{};
+        std::uint8_t content_type{};
+        std::uint32_t version{};
+        std::string version_string;
+        std::string entry_name;
+        std::uint64_t entry_size{};
+    };
+
     struct PathCacheEntry {
         std::int64_t mtime{};
         std::uint64_t size{};
         std::vector<PathCacheGame> games;
+        ProviderCacheKind provider_kind{ProviderCacheKind::NotScanned};
+        std::vector<PathCacheProviderEntry> provider_entries;
     };
 
     void LoadPathCache();

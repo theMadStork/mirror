@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <mutex>
 #include <random>
 #include <regex>
 #include <openssl/evp.h>
@@ -1225,7 +1226,8 @@ void ManualContentProvider::AddEntryWithVersion(TitleType title_type, ContentRec
 }
 
 bool ManualContentProvider::AddEntriesFromContainer(VirtualFile file, bool only_content,
-                                                    std::optional<u64> base_program_id) {
+                                                    std::optional<u64> base_program_id,
+                                                    std::vector<DeferredContainerEntry>* out_entries) {
     const auto nsp = OpenContainerAsNsp(file, Loader::FileType::Unknown);
     if (!nsp) {
         return false;
@@ -1233,15 +1235,164 @@ bool ManualContentProvider::AddEntriesFromContainer(VirtualFile file, bool only_
 
     return ForEachContainerEntry(
         nsp, only_content, base_program_id,
-        [this](TitleType title_type, ContentRecordType content_type, u64 title_id,
-               const VirtualFile& entry_file, u32 version, const std::string& version_string) {
+        [this, out_entries](TitleType title_type, ContentRecordType content_type, u64 title_id,
+                            const VirtualFile& entry_file, u32 version,
+                            const std::string& version_string) {
             if (title_type == TitleType::Update) {
                 AddEntryWithVersion(title_type, content_type, title_id, version, version_string,
                                     entry_file);
             } else {
                 AddEntry(title_type, content_type, title_id, entry_file);
             }
+            if (out_entries) {
+                out_entries->push_back({
+                    .title_id = title_id,
+                    .title_type = title_type,
+                    .content_type = content_type,
+                    .version = version,
+                    .version_string = version_string,
+                    .entry_name = entry_file->GetName(),
+                    .entry_size = entry_file->GetSize(),
+                });
+            }
         });
+}
+
+namespace {
+
+// A VfsFile that defers opening its backing file until first access. Name and size are
+// answered from cached metadata so registration and enumeration cause no I/O — important
+// for game files on network drives or cloud placeholders, where any read triggers a
+// transfer or hydration.
+class DeferredEntryFile : public VfsFile {
+public:
+    DeferredEntryFile(std::string name_, u64 size_, std::function<VirtualFile()> resolve_)
+        : name{std::move(name_)}, size{size_}, resolve{std::move(resolve_)} {}
+
+    std::string GetName() const override {
+        return name;
+    }
+
+    std::size_t GetSize() const override {
+        return size;
+    }
+
+    bool Resize(std::size_t) override {
+        return false;
+    }
+
+    VirtualDir GetContainingDirectory() const override {
+        const auto file = Resolve();
+        return file ? file->GetContainingDirectory() : nullptr;
+    }
+
+    bool IsWritable() const override {
+        return false;
+    }
+
+    bool IsReadable() const override {
+        return true;
+    }
+
+    std::size_t Read(u8* data, std::size_t length, std::size_t offset) const override {
+        const auto file = Resolve();
+        return file ? file->Read(data, length, offset) : 0;
+    }
+
+    std::size_t Write(const u8*, std::size_t, std::size_t) override {
+        return 0;
+    }
+
+    bool Rename(std::string_view) override {
+        return false;
+    }
+
+private:
+    VirtualFile Resolve() const {
+        std::scoped_lock lk{mutex};
+        if (!attempted) {
+            attempted = true;
+            resolved = resolve();
+            if (!resolved) {
+                LOG_WARNING(Service_FS, "Deferred content entry '{}' failed to resolve", name);
+            }
+        }
+        return resolved;
+    }
+
+    std::string name;
+    u64 size;
+    std::function<VirtualFile()> resolve;
+
+    mutable std::mutex mutex;
+    mutable VirtualFile resolved;
+    mutable bool attempted{false};
+};
+
+// Shared, parse-at-most-once view of a container for deferred entries.
+struct DeferredContainerState {
+    explicit DeferredContainerState(std::function<VirtualFile()> open_)
+        : open{std::move(open_)} {}
+
+    std::shared_ptr<NSP> GetNsp() {
+        std::scoped_lock lk{mutex};
+        if (!attempted) {
+            attempted = true;
+            nsp = OpenContainerAsNsp(open(), Loader::FileType::Unknown);
+        }
+        return nsp;
+    }
+
+private:
+    std::function<VirtualFile()> open;
+    std::mutex mutex;
+    std::shared_ptr<NSP> nsp;
+    bool attempted{false};
+};
+
+} // Anonymous namespace
+
+void ManualContentProvider::AddDeferredEntry(TitleType title_type, ContentRecordType content_type,
+                                             u64 title_id, std::string entry_name, u64 entry_size,
+                                             std::function<VirtualFile()> open_file) {
+    AddEntry(title_type, content_type, title_id,
+             std::make_shared<DeferredEntryFile>(std::move(entry_name), entry_size,
+                                                 std::move(open_file)));
+}
+
+void ManualContentProvider::AddDeferredContainerEntries(
+    std::function<VirtualFile()> open_container,
+    const std::vector<DeferredContainerEntry>& deferred_entries) {
+    auto state = std::make_shared<DeferredContainerState>(std::move(open_container));
+
+    for (const auto& entry : deferred_entries) {
+        auto resolve = [state, title_id = entry.title_id, title_type = entry.title_type,
+                        content_type = entry.content_type]() -> VirtualFile {
+            const auto nsp = state->GetNsp();
+            if (!nsp) {
+                return nullptr;
+            }
+            const auto& ncas = nsp->GetNCAs();
+            const auto title_it = ncas.find(title_id);
+            if (title_it == ncas.end()) {
+                return nullptr;
+            }
+            const auto nca_it = title_it->second.find({title_type, content_type});
+            if (nca_it == title_it->second.end() || !nca_it->second) {
+                return nullptr;
+            }
+            return nca_it->second->GetBaseFile();
+        };
+
+        auto file = std::make_shared<DeferredEntryFile>(entry.entry_name, entry.entry_size,
+                                                        std::move(resolve));
+        if (entry.title_type == TitleType::Update) {
+            AddEntryWithVersion(entry.title_type, entry.content_type, entry.title_id,
+                                entry.version, entry.version_string, std::move(file));
+        } else {
+            AddEntry(entry.title_type, entry.content_type, entry.title_id, std::move(file));
+        }
+    }
 }
 
 void ManualContentProvider::ClearAllEntries() {
