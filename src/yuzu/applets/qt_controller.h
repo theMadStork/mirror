@@ -102,6 +102,12 @@ private:
     // Gets the controller combobox index for a given Controller Type per player.
     int GetIndexFromControllerType(Core::HID::NpadStyleIndex type, std::size_t player_index) const;
 
+    // Returns the given type if the game's supported style set accepts it, otherwise the
+    // closest supported style (preferring standard-pad layouts). Lets "Pro Controller"
+    // stay selectable even in games that only request single Joy-Con styles.
+    Core::HID::NpadStyleIndex ResolveSupportedControllerType(Core::HID::NpadStyleIndex type,
+                                                             std::size_t player_index) const;
+
     // Updates the controller icons per player.
     void UpdateControllerIcon(std::size_t player_index);
 
@@ -159,9 +165,14 @@ private:
     int RegisterUnknownDevice(const std::string& guid, const std::string& port,
                                const std::string& raw_name);
 
-    // Called on the Qt thread when player N's physical controller presses A (connect) or B (disconnect).
-    void OnPlayerButtonA(std::size_t player_index);
-    void OnPlayerButtonB(std::size_t player_index);
+    // Called on the Qt thread when a physical controller presses A (connect) or B
+    // (disconnect). physical_slot is the slot whose routing carried the press; the
+    // pressed_* identity (guid/port, captured on the HID thread at press time) is
+    // authoritative — routing may have been reassigned by the time these run.
+    void OnPlayerButtonA(std::size_t physical_slot, const std::string& pressed_guid,
+                         const std::string& pressed_port, const std::string& pressed_engine);
+    void OnPlayerButtonB(std::size_t physical_slot, const std::string& pressed_guid,
+                         const std::string& pressed_port);
 
     std::unique_ptr<Ui::QtControllerSelectorDialog> ui;
 
@@ -186,6 +197,11 @@ private:
     // Suppresses Key_Return confirm briefly after open so a held + from the opening
     // hotkey combo doesn't immediately close the dialog.
     bool suppress_confirm{false};
+
+    // Set when Escape backs out of the button row: the same physical B press also
+    // reaches OnPlayerButtonB, which must not treat it as P1 self-disconnect.
+    // Auto-cleared shortly after in case no matching OnPlayerButtonB arrives.
+    bool suppress_b_disconnect{false};
 
     // Index of the player slot currently highlighted by gamepad navigation.
     // Initialised to NUM_PLAYERS (sentinel for "none") until SetFocusedPlayer is called.
@@ -252,7 +268,9 @@ private:
     std::array<int, NUM_PLAYERS> player_claim_callback_keys{};
     int handheld_claim_callback_key{-1};
 
-    // Rising-edge state for A/B per slot (NUM_PLAYERS+1 entries; last = Handheld).
+    // Rising-edge state for A/B per slot. Handheld registers with slot index 0, sharing
+    // Player 1's entries: when both map to the same physical pad, the shared edge state
+    // deduplicates the doubled callback for a single press.
     std::mutex claim_state_mutex;
     std::array<bool, NUM_PLAYERS + 1> prev_a_pressed{};
     std::array<bool, NUM_PLAYERS + 1> prev_b_pressed{};

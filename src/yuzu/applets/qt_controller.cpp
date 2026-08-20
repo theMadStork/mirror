@@ -368,13 +368,25 @@ QtControllerSelectorDialog::QtControllerSelectorDialog(
                         prev_a_pressed[slot] = a_now;
                         prev_b_pressed[slot] = b_now;
                     }
+                    if (!fire_a && !fire_b)
+                        return;
+                    // Capture the pressing pad's identity NOW, on the HID thread. The
+                    // queued handler may run after RefreshPrePopulate has re-routed this
+                    // slot's params to a different physical device; reading them later
+                    // can attribute the press to the wrong pad and claim a slot with the
+                    // wrong device mapping.
+                    const auto id_param = controller->GetButtonParam(
+                        static_cast<std::size_t>(Settings::NativeButton::A));
+                    const std::string guid = id_param.Get("guid", "");
+                    const std::string port = id_param.Get("port", "");
+                    const std::string engine = id_param.Get("engine", "");
                     if (fire_a)
-                        QMetaObject::invokeMethod(this, [self, slot]() {
-                            if (self) self->OnPlayerButtonA(slot);
+                        QMetaObject::invokeMethod(this, [self, slot, guid, port, engine]() {
+                            if (self) self->OnPlayerButtonA(slot, guid, port, engine);
                         }, Qt::QueuedConnection);
-                    if (fire_b && slot != 0) // P1/Handheld B routes through ControllerNavigation → Key_Escape
-                        QMetaObject::invokeMethod(this, [self, slot]() {
-                            if (self) self->OnPlayerButtonB(slot);
+                    if (fire_b)
+                        QMetaObject::invokeMethod(this, [self, slot, guid, port]() {
+                            if (self) self->OnPlayerButtonB(slot, guid, port);
                         }, Qt::QueuedConnection);
                 },
                 .is_npad_service = false,
@@ -727,8 +739,11 @@ void QtControllerSelectorDialog::LoadConfiguration() {
         const auto connected = parameters.keep_controllers_connected && was_connected;
         player_groupboxes[index]->setChecked(connected);
         connected_controller_checkboxes[index]->setChecked(connected);
+        // Default every slot to Pro Controller rather than the last-used type; a
+        // previously forced single-Joy-Con session would otherwise stick. Y still
+        // cycles to the other types for this session.
         emulated_controllers[index]->setCurrentIndex(
-            GetIndexFromControllerType(controller->GetNpadStyleIndex(true), index));
+            GetIndexFromControllerType(Core::HID::NpadStyleIndex::Fullkey, index));
     }
 
     UpdateDockedState(handheld->IsConnected(true));
@@ -812,19 +827,19 @@ void QtControllerSelectorDialog::keyPressEvent(QKeyEvent* evt) {
         return;
     }
 
-    case Qt::Key_Escape: // B → back out of button row, else disconnect focused connected slot
+    case Qt::Key_Escape: // B → back out of button row to the player grid
+        // Slot disconnects are NOT handled here: every pad's B press (P1 included)
+        // reaches OnPlayerButtonB via its per-slot HID callback, which disconnects
+        // the slot that pad actually owns. Routing disconnects through the focus
+        // highlight made P1's B disconnect whichever slot happened to be focused —
+        // P2 by default when all players are connected at open.
         if (focused_button != FocusedButton::None) {
-            // SetFocusedButton parks focused_player_index at the NUM_PLAYERS sentinel,
-            // which the "waiting for P1" fallback below would misread as P1 self-disconnect.
             SetFocusedPlayer(last_focused_player);
-        } else if (focused_player_index < NUM_PLAYERS &&
-                   player_groupboxes[focused_player_index]->isChecked()) {
-            OnPlayerButtonB(focused_player_index);
-        } else if (player_groupboxes[0]->isChecked()) {
-            // Focus is on an empty slot or the sentinel. Only P1's pad drives navigation,
-            // so this B came from P1 — treat it as self-disconnect, matching the per-pad
-            // B semantics every other player gets via their HID callback.
-            OnPlayerButtonB(0);
+            // This Escape is usually P1's pad B routed through ControllerNavigation; the
+            // same physical press also reaches OnPlayerButtonB. A "back out of the button
+            // row" press must not double as self-disconnect, so suppress briefly.
+            suppress_b_disconnect = true;
+            QTimer::singleShot(150, this, [this] { suppress_b_disconnect = false; });
         }
         return;
 
@@ -1162,9 +1177,10 @@ void QtControllerSelectorDialog::SetEmulatedControllers(std::size_t player_index
         emulated_controllers[player_index]->addItem(controller_name);
     };
 
-    if (npad_style_set.fullkey == 1) {
-        add_item(Core::HID::NpadStyleIndex::Fullkey, tr("Pro Controller"));
-    }
+    // Always offer Pro Controller, first so it is the default, even when the game does
+    // not request the fullkey style. UpdateControllerState resolves an unsupported
+    // selection to the closest style the game accepts before connecting.
+    add_item(Core::HID::NpadStyleIndex::Fullkey, tr("Pro Controller"));
 
     if (npad_style_set.joycon_dual == 1) {
         add_item(Core::HID::NpadStyleIndex::JoyconDual, tr("Dual Joycons"));
@@ -1240,6 +1256,58 @@ int QtControllerSelectorDialog::GetIndexFromControllerType(Core::HID::NpadStyleI
     return it->first;
 }
 
+Core::HID::NpadStyleIndex QtControllerSelectorDialog::ResolveSupportedControllerType(
+    Core::HID::NpadStyleIndex type, std::size_t player_index) const {
+    const auto npad_style_set = system.HIDCore().GetSupportedStyleTag();
+
+    const auto is_supported = [&npad_style_set, player_index](Core::HID::NpadStyleIndex style) {
+        switch (style) {
+        case Core::HID::NpadStyleIndex::Fullkey:
+            return npad_style_set.fullkey == 1;
+        case Core::HID::NpadStyleIndex::JoyconDual:
+            return npad_style_set.joycon_dual == 1;
+        case Core::HID::NpadStyleIndex::JoyconLeft:
+            return npad_style_set.joycon_left == 1;
+        case Core::HID::NpadStyleIndex::JoyconRight:
+            return npad_style_set.joycon_right == 1;
+        case Core::HID::NpadStyleIndex::Handheld:
+            return player_index == 0 && npad_style_set.handheld == 1;
+        case Core::HID::NpadStyleIndex::GameCube:
+            return npad_style_set.gamecube == 1;
+        case Core::HID::NpadStyleIndex::Pokeball:
+            return npad_style_set.palma == 1;
+        case Core::HID::NpadStyleIndex::NES:
+            return npad_style_set.lark == 1;
+        case Core::HID::NpadStyleIndex::SNES:
+            return npad_style_set.lucia == 1;
+        case Core::HID::NpadStyleIndex::N64:
+            return npad_style_set.lagoon == 1;
+        case Core::HID::NpadStyleIndex::SegaGenesis:
+            return npad_style_set.lager == 1;
+        default:
+            return false;
+        }
+    };
+
+    if (is_supported(type)) {
+        return type;
+    }
+
+    // Preference order keeps a standard-pad layout wherever the game allows one; the
+    // single Joy-Con styles rely on the sideways compensation in NPad to stay playable.
+    static constexpr std::array<Core::HID::NpadStyleIndex, 6> fallback_order{
+        Core::HID::NpadStyleIndex::Fullkey,    Core::HID::NpadStyleIndex::JoyconDual,
+        Core::HID::NpadStyleIndex::JoyconLeft, Core::HID::NpadStyleIndex::JoyconRight,
+        Core::HID::NpadStyleIndex::Handheld,   Core::HID::NpadStyleIndex::GameCube,
+    };
+    for (const auto candidate : fallback_order) {
+        if (is_supported(candidate)) {
+            return candidate;
+        }
+    }
+    return type;
+}
+
 void QtControllerSelectorDialog::UpdateControllerIcon(std::size_t player_index) {
     if (!player_groupboxes[player_index]->isChecked()) {
         connected_controller_icons[player_index]->setStyleSheet(QString{});
@@ -1287,8 +1355,10 @@ void QtControllerSelectorDialog::UpdateControllerIcon(std::size_t player_index) 
 void QtControllerSelectorDialog::UpdateControllerState(std::size_t player_index) {
     auto* controller = system.HIDCore().GetEmulatedControllerByIndex(player_index);
 
-    const auto controller_type = GetControllerTypeFromIndex(
-        emulated_controllers[player_index]->currentIndex(), player_index);
+    const auto controller_type = ResolveSupportedControllerType(
+        GetControllerTypeFromIndex(emulated_controllers[player_index]->currentIndex(),
+                                   player_index),
+        player_index);
     const auto player_connected = player_groupboxes[player_index]->isChecked() &&
                                   controller_type != Core::HID::NpadStyleIndex::Handheld;
 
@@ -1361,29 +1431,20 @@ void QtControllerSelectorDialog::UpdateDockedState(bool is_handheld) {
     }
 }
 
-void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
+void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot,
+                                                 const std::string& pressed_guid,
+                                                 const std::string& pressed_port,
+                                                 const std::string& pressed_engine) {
     if (physical_slot >= NUM_PLAYERS) return;
 
-    // The pad that pressed A is the one driving this slot's emulated controller. If the
-    // slot is already connected, this pad already owns a player — A is a no-op. This holds
-    // regardless of GUID bookkeeping below, so an already-connected pad can never claim a
-    // second slot even when the cached device list disagrees with the stored mapping.
-    if (player_groupboxes[physical_slot]->isChecked()) {
-        return;
-    }
+    LOG_INFO(Frontend, "Controller applet: A press via slot {} from device {}:{} (engine '{}')",
+             physical_slot + 1, pressed_guid, pressed_port, pressed_engine);
 
-    // Get the identity of the physical controller that pressed A.
-    const auto* phys_ctrl = system.HIDCore().GetEmulatedControllerByIndex(physical_slot);
-    const auto btn_param = phys_ctrl->GetButtonParam(
-        static_cast<std::size_t>(Settings::NativeButton::A));
-    const std::string pressed_guid   = btn_param.Get("guid",   "");
-    const std::string pressed_port   = btn_param.Get("port",   "");
-    const std::string pressed_engine = btn_param.Get("engine", "");
-
-    // Identity guard: if a connected slot's own mapping already points at this physical
-    // device, the pad is already a player. This can happen when the press arrives via a
-    // pre-routed idle slot while the owning slot's combo index is stale — compare against
-    // HID params directly instead of trusting combo indices.
+    // Identity guard: if a connected slot's own mapping already points at the physical
+    // device that pressed (identity captured on the HID thread at press time), the pad
+    // is already a player — A is a no-op. This is checked against HID params directly,
+    // not combo indices, and not against which slot's routing happened to carry the
+    // press: routing can be stale by the time this queued handler runs.
     if (!pressed_guid.empty()) {
         for (std::size_t j = 0; j < NUM_PLAYERS; ++j) {
             if (!player_groupboxes[j]->isChecked()) continue;
@@ -1395,6 +1456,12 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
                          pressed_guid, pressed_port, j + 1);
                 return;
             }
+        }
+    } else {
+        // No device identity (e.g. keyboard-driven press): the slot's routing is all we
+        // know. If that slot is already connected, its owner pressed A — no-op.
+        if (player_groupboxes[physical_slot]->isChecked()) {
+            return;
         }
     }
 
@@ -1464,7 +1531,7 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
 
     // Device-not-found edge case: register it so it gets a unique display name.
     if (device_idx < 0 && !pressed_guid.empty()) {
-        const std::string raw = btn_param.Get("display", pressed_engine);
+        const std::string raw = pressed_engine.empty() ? std::string{"Unknown"} : pressed_engine;
         LOG_WARNING(Frontend,
                     "Controller applet: device {}:{} absent from device list even after "
                     "re-enumeration; falling back to placeholder name '{}'",
@@ -1472,16 +1539,38 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
         device_idx = RegisterUnknownDevice(pressed_guid, pressed_port, raw);
     }
 
-    // Stage the pressing device in the slot's combo BEFORE connecting. ApplyInputDevice
-    // no-ops while the slot is disconnected; the toggled handler below applies the
-    // mapping, so the emulated controller never connects with stale pre-routed params.
+    // Stage the pressing device in the slot's combo SILENTLY before connecting. Letting
+    // the combo's change handler run here would call ApplyInputDevice as a no-op (the
+    // slot is still disconnected) and then RefreshPrePopulate, which re-routes the
+    // target slot's params to a *different* free pad mid-claim. The toggled handler
+    // below is the single apply point: it reads the staged index and maps the pressing
+    // pad onto the slot before the emulated controller connects.
     if (device_idx >= 0 && input_device_combos[target_slot] &&
         input_device_combos[target_slot]->currentIndex() != device_idx) {
+        QSignalBlocker blocker(input_device_combos[target_slot]);
         input_device_combos[target_slot]->setCurrentIndex(device_idx);
     }
 
     // Connect the target slot (fires toggled, which applies the device and syncs HID + UI).
     player_groupboxes[target_slot]->setChecked(true);
+
+    // Ground truth check: the slot's live mapping must now be the pad that pressed.
+    if (!pressed_guid.empty()) {
+        const auto applied =
+            system.HIDCore().GetEmulatedControllerByIndex(target_slot)->GetButtonParam(
+                static_cast<std::size_t>(Settings::NativeButton::A));
+        const std::string applied_guid = applied.Get("guid", "");
+        const std::string applied_port = applied.Get("port", "");
+        if (applied_guid != pressed_guid || applied_port != pressed_port) {
+            LOG_ERROR(Frontend,
+                      "Controller applet: claim mismatch — pad {}:{} claimed player slot {} "
+                      "but the slot is mapped to {}:{}",
+                      pressed_guid, pressed_port, target_slot + 1, applied_guid, applied_port);
+        } else {
+            LOG_INFO(Frontend, "Controller applet: pad {}:{} claimed player slot {}",
+                     pressed_guid, pressed_port, target_slot + 1);
+        }
+    }
 
     // P1 takes over gamepad focus.
     if (target_slot == 0) {
@@ -1492,10 +1581,40 @@ void QtControllerSelectorDialog::OnPlayerButtonA(std::size_t physical_slot) {
     RefreshPrePopulate();
 }
 
-void QtControllerSelectorDialog::OnPlayerButtonB(std::size_t player_index) {
-    if (player_index >= NUM_PLAYERS) return;
-    if (!player_groupboxes[player_index]->isChecked()) return;
-    player_groupboxes[player_index]->setChecked(false);
+void QtControllerSelectorDialog::OnPlayerButtonB(std::size_t physical_slot,
+                                                 const std::string& pressed_guid,
+                                                 const std::string& pressed_port) {
+    // Disconnect the slot OWNED by the pad that pressed B — matched by device identity
+    // (captured on the HID thread at press time), so it is independent of which slot's
+    // routing carried the press and of where the navigation focus happens to be.
+    if (!pressed_guid.empty()) {
+        for (std::size_t j = 0; j < NUM_PLAYERS; ++j) {
+            if (!player_groupboxes[j]->isChecked()) continue;
+            const auto owned = system.HIDCore().GetEmulatedControllerByIndex(j)->GetButtonParam(
+                static_cast<std::size_t>(Settings::NativeButton::A));
+            if (owned.Get("guid", "") == pressed_guid && owned.Get("port", "") == pressed_port) {
+                // P1's pad drives UI navigation: if this same press just backed out of
+                // the button row (Escape path), it is not a disconnect request.
+                if (j == 0 && suppress_b_disconnect) {
+                    suppress_b_disconnect = false;
+                    return;
+                }
+                LOG_INFO(Frontend, "Controller applet: pad {}:{} disconnects its player slot {}",
+                         pressed_guid, pressed_port, j + 1);
+                player_groupboxes[j]->setChecked(false);
+                return;
+            }
+        }
+        return; // pad owns no connected slot — nothing to disconnect
+    }
+    // No device identity (e.g. keyboard-driven press): fall back to the routed slot.
+    if (physical_slot >= NUM_PLAYERS) return;
+    if (physical_slot == 0 && suppress_b_disconnect) {
+        suppress_b_disconnect = false;
+        return;
+    }
+    if (!player_groupboxes[physical_slot]->isChecked()) return;
+    player_groupboxes[physical_slot]->setChecked(false);
 }
 
 void QtControllerSelectorDialog::ApplyInputDevice(std::size_t player_index) {
@@ -1511,6 +1630,20 @@ void QtControllerSelectorDialog::ApplyInputDevice(std::size_t player_index) {
     const auto button_mapping = input_subsystem->GetButtonMappingForDevice(device);
     const auto analog_mapping = input_subsystem->GetAnalogMappingForDevice(device);
     const auto motion_mapping = input_subsystem->GetMotionMappingForDevice(device);
+
+    if (button_mapping.empty()) {
+        // The slot keeps whatever params it had (often a pre-routed different pad) —
+        // this is the silent-wrong-device failure mode, so make it loud.
+        LOG_ERROR(Frontend,
+                  "Controller applet: empty button mapping for device '{}' ({}:{}, engine "
+                  "'{}'); player slot {} keeps its previous mapping",
+                  device.Get("display", ""), device.Get("guid", ""), device.Get("port", ""),
+                  device.Get("engine", ""), player_index + 1);
+        return;
+    }
+    LOG_INFO(Frontend, "Controller applet: applying device '{}' ({}:{}) to player slot {}",
+             device.Get("display", ""), device.Get("guid", ""), device.Get("port", ""),
+             player_index + 1);
 
     for (const auto& [btn, param] : button_mapping) {
         controller->SetButtonParam(static_cast<std::size_t>(btn), param);
@@ -1603,6 +1736,10 @@ void QtControllerSelectorDialog::RefreshPrePopulate() {
         auto* controller = system.HIDCore().GetEmulatedControllerByIndex(next_slot);
         const auto button_mapping =
             input_subsystem->GetButtonMappingForDevice(cached_input_devices[d]);
+        LOG_INFO(Frontend, "Controller applet: pre-routing device '{}' ({}:{}) -> idle slot {}",
+                 cached_input_devices[d].Get("display", ""),
+                 cached_input_devices[d].Get("guid", ""),
+                 cached_input_devices[d].Get("port", ""), next_slot + 1);
         for (const auto& [btn, param] : button_mapping)
             controller->SetButtonParam(static_cast<std::size_t>(btn), param);
 
