@@ -470,6 +470,48 @@ void NPad::RequestPadStateUpdate(Kernel::KernelCore& kernel, u64 aruid, Core::HI
         pad_entry.npad_buttons.right_sr.Assign(button_state.right_sr);
     }
 
+    // Horizontal-grip compensation for single Joy-Con styles: additionally accept a
+    // standard controller's face buttons, shoulders, plus/minus and stick in their
+    // natural positions, translated to the rotated Joy-Con equivalents the game
+    // expects. Button bits are OR'd on top of the pass-through mapping, so a device
+    // that already produces the raw Joy-Con layout keeps working unchanged.
+    if (controller_type == Core::HID::NpadStyleIndex::JoyconLeft) {
+        auto& btns = pad_entry.npad_buttons;
+        btns.down.Assign(btns.down.Value() || button_state.a.Value());
+        btns.left.Assign(btns.left.Value() || button_state.b.Value());
+        btns.right.Assign(btns.right.Value() || button_state.x.Value());
+        btns.up.Assign(btns.up.Value() || button_state.y.Value());
+        btns.left_sl.Assign(btns.left_sl.Value() || button_state.l.Value() ||
+                            button_state.zl.Value());
+        btns.left_sr.Assign(btns.left_sr.Value() || button_state.r.Value() ||
+                            button_state.zr.Value());
+        btns.minus.Assign(btns.minus.Value() || button_state.plus.Value());
+        // Rotate so pushing the stick up reads as "up" in the game's sideways frame.
+        pad_entry.l_stick.x = stick_state.left.y;
+        pad_entry.l_stick.y = -stick_state.left.x;
+    }
+
+    if (controller_type == Core::HID::NpadStyleIndex::JoyconRight) {
+        auto& btns = pad_entry.npad_buttons;
+        btns.x.Assign(btns.x.Value() || button_state.a.Value());
+        btns.a.Assign(btns.a.Value() || button_state.b.Value());
+        btns.y.Assign(btns.y.Value() || button_state.x.Value());
+        btns.b.Assign(btns.b.Value() || button_state.y.Value());
+        btns.right_sl.Assign(btns.right_sl.Value() || button_state.l.Value() ||
+                             button_state.zl.Value());
+        btns.right_sr.Assign(btns.right_sr.Value() || button_state.r.Value() ||
+                             button_state.zr.Value());
+        btns.plus.Assign(btns.plus.Value() || button_state.minus.Value());
+        btns.stick_r.Assign(btns.stick_r.Value() || button_state.stick_l.Value());
+        // The single right Joy-Con only reads the right stick; feed it from the pad's
+        // left stick (the natural one) unless only the right stick is deflected.
+        const auto& src = (stick_state.left.x != 0 || stick_state.left.y != 0)
+                              ? stick_state.left
+                              : stick_state.right;
+        pad_entry.r_stick.x = -src.y;
+        pad_entry.r_stick.y = src.x;
+    }
+
     if (controller_type == Core::HID::NpadStyleIndex::GameCube) {
         const auto& trigger_state = controller.device->GetTriggers();
         trigger_entry.l_analog = trigger_state.left;

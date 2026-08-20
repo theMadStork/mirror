@@ -55,7 +55,6 @@ void ControllerNavigation::ControllerUpdateEvent(Core::HID::ControllerTriggerTyp
 }
 
 void ControllerNavigation::ControllerUpdateButton() {
-    const auto controller_type = player1_controller->GetNpadStyleIndex();
     const auto& player1_buttons = player1_controller->GetButtonsValues();
     const auto& handheld_buttons = handheld_controller->GetButtonsValues();
 
@@ -66,38 +65,26 @@ void ControllerNavigation::ControllerUpdateButton() {
         button_values[i].value = button;
     }
 
-    switch (controller_type) {
-    case Core::HID::NpadStyleIndex::Fullkey:
-    case Core::HID::NpadStyleIndex::JoyconDual:
-    case Core::HID::NpadStyleIndex::Handheld:
-    case Core::HID::NpadStyleIndex::GameCube:
-        TriggerButton(Settings::NativeButton::A, Qt::Key_Enter);
-        TriggerButton(Settings::NativeButton::B, Qt::Key_Escape);
-        TriggerButton(Settings::NativeButton::X, Qt::Key_X);
-        TriggerButton(Settings::NativeButton::Y, Qt::Key_Y);
-        TriggerButton(Settings::NativeButton::L, Qt::Key_PageUp);
-        TriggerButton(Settings::NativeButton::R, Qt::Key_PageDown);
-        TriggerButton(Settings::NativeButton::DDown, Qt::Key_Down);
-        TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Left);
-        TriggerButton(Settings::NativeButton::DRight, Qt::Key_Right);
-        TriggerButton(Settings::NativeButton::DUp, Qt::Key_Up);
-        TriggerButton(Settings::NativeButton::Plus, Qt::Key_Return);
-        break;
-    case Core::HID::NpadStyleIndex::JoyconLeft:
-        TriggerButton(Settings::NativeButton::DDown, Qt::Key_Enter);
-        TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Escape);
-        break;
-    case Core::HID::NpadStyleIndex::JoyconRight:
-        TriggerButton(Settings::NativeButton::X, Qt::Key_X);
-        TriggerButton(Settings::NativeButton::A, Qt::Key_Escape);
-        break;
-    default:
-        break;
-    }
+    // Always use the full standard mapping, regardless of P1's current npad style.
+    // The old style-specific reductions assumed real single Joy-Con hardware; with a
+    // standard pad driving a single Joy-Con style (see the sideways compensation in
+    // NPad), they silently unmapped Start/+, Y, B and the d-pad whenever a game had
+    // forced a single Joy-Con type — e.g. the controller applet opened via hotkey
+    // during Mario Party could not be confirmed or have its type cycled.
+    TriggerButton(Settings::NativeButton::A, Qt::Key_Enter);
+    TriggerButton(Settings::NativeButton::B, Qt::Key_Escape);
+    TriggerButton(Settings::NativeButton::X, Qt::Key_X);
+    TriggerButton(Settings::NativeButton::Y, Qt::Key_Y);
+    TriggerButton(Settings::NativeButton::L, Qt::Key_PageUp);
+    TriggerButton(Settings::NativeButton::R, Qt::Key_PageDown);
+    TriggerButton(Settings::NativeButton::DDown, Qt::Key_Down);
+    TriggerButton(Settings::NativeButton::DLeft, Qt::Key_Left);
+    TriggerButton(Settings::NativeButton::DRight, Qt::Key_Right);
+    TriggerButton(Settings::NativeButton::DUp, Qt::Key_Up);
+    TriggerButton(Settings::NativeButton::Plus, Qt::Key_Return);
 }
 
 void ControllerNavigation::ControllerUpdateStick() {
-    const auto controller_type = player1_controller->GetNpadStyleIndex();
     const auto& player1_sticks = player1_controller->GetSticksValues();
     const auto& handheld_sticks = handheld_controller->GetSticksValues();
     bool update = false;
@@ -121,65 +108,23 @@ void ControllerNavigation::ControllerUpdateStick() {
         return;
     }
 
-    switch (controller_type) {
-    case Core::HID::NpadStyleIndex::Fullkey:
-    case Core::HID::NpadStyleIndex::JoyconDual:
-    case Core::HID::NpadStyleIndex::Handheld:
-    case Core::HID::NpadStyleIndex::GameCube:
-        if (stick_values[Settings::NativeAnalog::LStick].down) {
-            emit TriggerKeyboardEvent(Qt::Key_Down);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].left) {
-            emit TriggerKeyboardEvent(Qt::Key_Left);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].right) {
-            emit TriggerKeyboardEvent(Qt::Key_Right);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].up) {
-            emit TriggerKeyboardEvent(Qt::Key_Up);
-            return;
-        }
-        break;
-    case Core::HID::NpadStyleIndex::JoyconLeft:
-        if (stick_values[Settings::NativeAnalog::LStick].left) {
-            emit TriggerKeyboardEvent(Qt::Key_Down);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].up) {
-            emit TriggerKeyboardEvent(Qt::Key_Left);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].down) {
-            emit TriggerKeyboardEvent(Qt::Key_Right);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::LStick].right) {
-            emit TriggerKeyboardEvent(Qt::Key_Up);
-            return;
-        }
-        break;
-    case Core::HID::NpadStyleIndex::JoyconRight:
-        if (stick_values[Settings::NativeAnalog::RStick].right) {
-            emit TriggerKeyboardEvent(Qt::Key_Down);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::RStick].down) {
-            emit TriggerKeyboardEvent(Qt::Key_Left);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::RStick].up) {
-            emit TriggerKeyboardEvent(Qt::Key_Right);
-            return;
-        }
-        if (stick_values[Settings::NativeAnalog::RStick].left) {
-            emit TriggerKeyboardEvent(Qt::Key_Up);
-            return;
-        }
-        break;
-    default:
-        break;
+    // Standard left-stick mapping regardless of P1's npad style, matching
+    // ControllerUpdateButton above — a normal pad's stick should always navigate
+    // in its physical direction, even while a single Joy-Con style is forced.
+    if (stick_values[Settings::NativeAnalog::LStick].down) {
+        emit TriggerKeyboardEvent(Qt::Key_Down);
+        return;
+    }
+    if (stick_values[Settings::NativeAnalog::LStick].left) {
+        emit TriggerKeyboardEvent(Qt::Key_Left);
+        return;
+    }
+    if (stick_values[Settings::NativeAnalog::LStick].right) {
+        emit TriggerKeyboardEvent(Qt::Key_Right);
+        return;
+    }
+    if (stick_values[Settings::NativeAnalog::LStick].up) {
+        emit TriggerKeyboardEvent(Qt::Key_Up);
+        return;
     }
 }
