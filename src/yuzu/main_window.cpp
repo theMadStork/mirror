@@ -7,9 +7,14 @@
 #undef VMA_IMPLEMENTATION
 #endif
 
+#include <algorithm>
+#include <optional>
+
 #include <boost/algorithm/string/split.hpp>
 #include "common/fs/path_util.h"
+#include "common/param_package.h"
 #include "common/settings.h"
+#include "common/settings_input.h"
 #include "common/settings_enums.h"
 #include "frontend_common/settings_generator.h"
 #include "render/performance_overlay.h"
@@ -415,6 +420,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     ConnectMenuEvents();
     ConnectWidgetEvents();
 
+    // Rebind physical pads to Player 1..N in connection order before HID loads the
+    // player mappings, so input follows whichever controllers are actually present.
+    ReassignControllersOnLaunch();
     QtCommon::SetupHID();
     controller_dialog->refreshConfiguration();
 
@@ -599,6 +607,85 @@ MainWindow::~MainWindow() {
     ::close(sig_interrupt_fds[0]);
     ::close(sig_interrupt_fds[1]);
 #endif
+}
+
+void MainWindow::ReassignControllersOnLaunch() {
+    // Physical SDL gamepads present right now, in the order SDL enumerated them.
+    // Dual Joy-Con synthetics (guid2) are skipped — their halves are listed individually.
+    auto devices = input_subsystem->GetInputDevices();
+    std::erase_if(devices, [](const Common::ParamPackage& d) {
+        return d.Get("engine", "") != "sdl" || !d.Has("guid") || d.Has("guid2");
+    });
+    if (devices.empty()) {
+        // Leave saved (e.g. keyboard) mappings untouched when no pad is connected.
+        return;
+    }
+    std::stable_sort(devices.begin(), devices.end(),
+                     [](const Common::ParamPackage& a, const Common::ParamPackage& b) {
+                         return a.Get("arrival", 0) < b.Get("arrival", 0);
+                     });
+
+    auto& players = Settings::values.players.GetValue();
+    const auto previous = players;
+
+    // A slot's physical pad is identified by the guid:port of its A-button binding,
+    // matching the convention used by the controller-selector applet.
+    const auto slot_device_id = [](const Settings::PlayerInput& p) -> std::string {
+        const Common::ParamPackage param{p.buttons[Settings::NativeButton::A]};
+        if (param.Get("engine", "") != "sdl") {
+            return {};
+        }
+        return fmt::format("{}:{}", param.Get("guid", ""), param.Get("port", 0));
+    };
+
+    const std::size_t num_assign = (std::min)(devices.size(), std::size_t{8});
+    std::array<bool, 8> consumed{};
+    for (std::size_t i = 0; i < num_assign; ++i) {
+        const auto& device = devices[i];
+        const std::string device_id =
+            fmt::format("{}:{}", device.Get("guid", ""), device.Get("port", 0));
+
+        // Prefer moving the pad's previous slot mapping so custom bindings survive reordering.
+        std::optional<std::size_t> source;
+        for (std::size_t j = 0; j < consumed.size(); ++j) {
+            if (!consumed[j] && slot_device_id(previous[j]) == device_id) {
+                source = j;
+                break;
+            }
+        }
+
+        auto& player = players[i];
+        if (source.has_value()) {
+            consumed[*source] = true;
+            player = previous[*source];
+        } else {
+            const auto button_mappings = input_subsystem->GetButtonMappingForDevice(device);
+            const auto analog_mappings = input_subsystem->GetAnalogMappingForDevice(device);
+            const auto motion_mappings = input_subsystem->GetMotionMappingForDevice(device);
+            player.buttons.fill("");
+            player.analogs.fill("");
+            player.motions.fill("");
+            for (const auto& [id, param] : button_mappings) {
+                player.buttons[id] = param.Serialize();
+            }
+            for (const auto& [id, param] : analog_mappings) {
+                player.analogs[id] = param.Serialize();
+            }
+            for (const auto& [id, param] : motion_mappings) {
+                player.motions[id] = param.Serialize();
+            }
+        }
+        player.connected = true;
+        LOG_INFO(Frontend, "Launch controller assignment: '{}' -> Player {}",
+                 device.Get("display", ""), i + 1);
+    }
+
+    // Higher slots may still reference pads that were just claimed above — disconnect them.
+    // Handheld (index 8) would conflict with the Player 1 assignment.
+    for (std::size_t i = num_assign; i < 8; ++i) {
+        players[i].connected = false;
+    }
+    players[8].connected = false;
 }
 
 void MainWindow::AmiiboSettingsShowDialog(const Core::Frontend::CabinetParameters& parameters,

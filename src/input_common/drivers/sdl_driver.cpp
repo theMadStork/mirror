@@ -283,6 +283,18 @@ public:
         return port;
     }
 
+    /**
+     * Global enumeration/connection order across all models, unlike port which
+     * counts only joysticks sharing this GUID
+     */
+    int GetArrival() const {
+        return arrival;
+    }
+
+    void SetArrival(int arrival_) {
+        arrival = arrival_;
+    }
+
     SDL_Joystick* GetSDLJoystick() const {
         return sdl_joystick.get();
     }
@@ -388,6 +400,7 @@ public:
 private:
     Common::UUID guid;
     int port;
+    int arrival = 0;
     std::unique_ptr<SDL_Joystick, decltype(&SDL_CloseJoystick)> sdl_joystick;
     std::unique_ptr<SDL_Gamepad, decltype(&SDL_CloseGamepad)> sdl_controller;
     mutable std::mutex mutex;
@@ -521,6 +534,7 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
     std::scoped_lock lock{joystick_map_mutex};
     if (joystick_map.find(guid) == joystick_map.end()) {
         auto joystick = std::make_shared<SDLJoystick>(guid, 0, sdl_joystick, sdl_gamecontroller);
+        joystick->SetArrival(next_arrival_index++);
         PreSetController(joystick->GetPadIdentifier());
         joystick->EnableMotion();
         SetBattery(joystick->GetPadIdentifier(),
@@ -536,6 +550,7 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
 
     if (joystick_it != joystick_guid_list.end()) {
         (*joystick_it)->SetSDLJoystick(sdl_joystick, sdl_gamecontroller);
+        (*joystick_it)->SetArrival(next_arrival_index++);
         (*joystick_it)->EnableMotion();
         SetBattery((*joystick_it)->GetPadIdentifier(),
                    (*joystick_it)->GetBatteryLevel(battery_state, battery_percent));
@@ -544,6 +559,7 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
 
     const int port = static_cast<int>(joystick_guid_list.size());
     auto joystick = std::make_shared<SDLJoystick>(guid, port, sdl_joystick, sdl_gamecontroller);
+    joystick->SetArrival(next_arrival_index++);
     PreSetController(joystick->GetPadIdentifier());
     joystick->EnableMotion();
     SetBattery(joystick->GetPadIdentifier(),
@@ -749,6 +765,7 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
                 {"raw", raw_ctrl_name},
                 {"guid", joystick->GetGUID().RawString()},
                 {"port", std::to_string(joystick->GetPort())},
+                {"arrival", std::to_string(joystick->GetArrival())},
             });
             if (joystick->IsJoyconLeft()) {
                 joycon_pairs.insert_or_assign(joystick->GetPort(), joystick);
@@ -774,6 +791,7 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
                     {"guid", joystick->GetGUID().RawString()},
                     {"guid2", joystick2->GetGUID().RawString()},
                     {"port", std::to_string(joystick->GetPort())},
+                    {"arrival", std::to_string(joystick->GetArrival())},
                 });
             }
         }

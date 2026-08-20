@@ -123,6 +123,10 @@ private:
     bool start_thread = false;
     std::atomic<bool> initialized = false;
 
+    /// Monotonic counter stamped onto each joystick as it is enumerated or hot-plugged,
+    /// giving a global connection order (per-GUID ports cannot provide this)
+    int next_arrival_index = 0;
+
     std::thread vibration_thread;
 };
 } // namespace InputCommon

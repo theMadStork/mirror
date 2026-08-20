@@ -255,6 +255,10 @@ private:
     void InitializeDebugWidgets();
     void InitializeRecentFileMenuActions();
 
+    /// Reassigns present SDL gamepads to Player 1..N in connection order at startup,
+    /// carrying over each pad's previous slot mapping when one exists.
+    void ReassignControllersOnLaunch();
+
     void SetDefaultUIGeometry();
     void RestoreUIState();
 
